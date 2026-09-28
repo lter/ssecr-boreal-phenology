@@ -10,7 +10,7 @@ The group investigates how global warming has changed the **timing and length of
 
 Our central question is:
 
-> **How has global warming affected the timing and length of seasons, and the resulting greenhouse gas fluxes in Arctic-Boreal regions?**
+> **How have changes in the timing and length of seasons affected greenhouse gas fluxes (CO<sub>2</sub>, CH<sub>4</sub>) across Arctic-Boreal ecosystems, and what are the drivers of these changes across different ecosystem types and regions?**
 
 The Arctic is warming four to seven times faster than the global average (Rantanen et al., 2022). Changes in the timing of spring, summer, autumn, and winter can affect snow and permafrost thaw, vegetation development, soil conditions, and ultimately carbon cycling and GHG emissions.
 
