@@ -1,0 +1,128 @@
+---
+title: "Import data from Google Drive"
+output: html_document
+---
+
+## Load packages
+
+```{r packages}
+# install.packages(c("googledrive", "httpuv", "readr", "readxl"))
+library(googledrive)
+library(readr)
+library(readxl)
+```
+
+## Authorize googledrive
+
+Each person runs this with their own Gmail. The first time, it opens a browser,
+and you must check the box that gives access to your Drive files. Run it once
+in the console before you knit.
+
+```{r auth}
+googledrive::drive_auth(
+  email = gargle::gargle_oauth_email(),
+  path = NULL,
+  scopes = "https://www.googleapis.com/auth/drive",
+  cache = gargle::gargle_oauth_cache(),
+  use_oob = gargle::gargle_oob_default(),
+  token = NULL)
+```
+
+## Find the files on the Drive
+
+```{r find-files}
+drive_url <- googledrive::as_id("https://drive.google.com/drive/u/1/folders/1IFOJOUNOeNzQ35feaRyhcOSVgZCa6odZ")
+
+drive_folder <- googledrive::drive_ls(path = drive_url)
+drive_folder
+
+# recursive = TRUE also looks inside subfolders
+csv_files  <- googledrive::drive_ls(path = drive_url, recursive = TRUE, pattern = "\\.csv$")
+xlsx_files <- googledrive::drive_ls(path = drive_url, recursive = TRUE, pattern = "\\.xlsx$")
+zip_files  <- googledrive::drive_ls(path = drive_url, recursive = TRUE, pattern = "\\.zip$")
+
+csv_files
+xlsx_files
+zip_files
+```
+
+## Download new or updated files
+
+Files are saved in the `input` folder in the project directory. A file is only
+downloaded if it isn't in `input` yet, or if it was changed on the Drive after
+your local copy was downloaded.
+
+```{r download}
+input_dir <- "input"
+dir.create(input_dir, showWarnings = FALSE)
+
+# Downloads one file if it is missing or out of date; returns the local path
+download_if_new <- function(drive_files, i){
+  local_path    <- file.path(input_dir, drive_files$name[i])
+  drive_changed <- as.POSIXct(drive_files$drive_resource[[i]]$modifiedTime,
+                              format = "%Y-%m-%dT%H:%M:%OS", tz = "UTC")
+
+  if(!file.exists(local_path) || file.mtime(local_path) < drive_changed){
+    googledrive::drive_download(file = drive_files$id[i], path = local_path, overwrite = T)
+  } else {
+    message("Up to date, skipping: ", drive_files$name[i])
+  }
+  local_path
+}
+```
+
+## Read the files into R
+Cross-references with date on google drive items and only replaces/redownloads if there has been an update to the file, or if there is a new item added
+```{r read-files}
+data_list <- list()
+
+# CSVs
+for(i in seq_len(nrow(csv_files))){
+  local_path <- download_if_new(csv_files, i)
+  data_list[[csv_files$name[i]]] <- readr::read_csv(local_path)
+}
+
+# Excel files (reads the first sheet)
+for(i in seq_len(nrow(xlsx_files))){
+  local_path <- download_if_new(xlsx_files, i)
+  data_list[[xlsx_files$name[i]]] <- readxl::read_excel(local_path)
+}
+
+# Zip files: only the CSVs inside are kept, in input/<zip name>/
+# The zip itself goes to a temporary file and is deleted after unzipping
+for(i in seq_len(nrow(zip_files))){
+  zip_dir       <- file.path(input_dir, sub("\\.zip$", "", zip_files$name[i]))
+  drive_changed <- as.POSIXct(zip_files$drive_resource[[i]]$modifiedTime,
+                              format = "%Y-%m-%dT%H:%M:%OS", tz = "UTC")
+  local_csvs    <- list.files(zip_dir, pattern = "\\.csv$", full.names = TRUE)
+
+  # Download and unzip only if the CSVs are missing or older than the zip on the Drive
+  if(length(local_csvs) == 0 || min(file.mtime(local_csvs)) < drive_changed){
+    temp_zip <- tempfile(fileext = ".zip")
+    googledrive::drive_download(file = zip_files$id[i], path = temp_zip, overwrite = T)
+
+    csvs_in_zip <- grep("\\.csv$", unzip(temp_zip, list = TRUE)$Name, value = TRUE)
+    csvs_in_zip <- csvs_in_zip[!grepl("__MACOSX", csvs_in_zip)] #zips were created on a mac, this line of code deals with naming structure related to that
+    dir.create(zip_dir, showWarnings = FALSE)
+    unzip(temp_zip, files = csvs_in_zip, exdir = zip_dir, junkpaths = TRUE)
+    unlink(temp_zip)
+
+    local_csvs <- list.files(zip_dir, pattern = "\\.csv$", full.names = TRUE)
+  } else {
+    message("Up to date, skipping: ", zip_files$name[i])
+  }
+
+  for(focal_file in local_csvs){
+    data_list[[basename(focal_file)]] <- readr::read_csv(focal_file)
+  }
+}
+```
+
+## Check what was imported
+
+```{r check}
+names(data_list)
+
+# Pull out a single data frame by its file name, e.g.:
+# my_data <- data_list[["file_name.csv"]]
+```
