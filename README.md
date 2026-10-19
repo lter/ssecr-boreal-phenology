@@ -22,7 +22,6 @@ We are particularly interested in the **shoulder seasons (spring and autumn)** a
 - Ida Lie-Nielsen
 - Taylor Michael
 - Nathalie Ylenia Triches
-- Damian Forck
 - Mauricio Toro
 
 ## 🎯 Objective
