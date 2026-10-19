@@ -1,0 +1,284 @@
+---
+title: "Comparison of ARGO and FLUXNET Sites"
+subtitle: "Arctic-Boreal Region"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE
+  )
+```
+
+```{r, packages, echo=TRUE}
+library(tidyverse) # Easily Install and Load the 'Tidyverse' CRAN v2.0.0
+library(knitr) # A General-Purpose Package for Dynamic Report Generation in R CRAN v1.52
+library(googledrive) # An Interface to Google Drive CRAN v2.1.2
+library(googlesheets4) # Access Google Sheets using the Sheets API V4 CRAN v1.1.2
+```
+
+
+# Purpose and scope
+
+This report compares site inventories from two databases:
+
+- **[FLUXNET](https://data.fluxnet.org/data/):** Eddy-covariance flux observation sites.
+- **[ARGO](https://cosima.nceas.ucsb.edu/carbon-flux-sites/):** Carbon flux research sites.
+
+The objective is to identify:
+
+1. Sites listed in both databases.
+2. Sites listed only in FLUXNET.
+3. Sites listed only in ARGO.
+4. Records with missing site IDs in either database.
+
+The comparison focuses on sites in the Arctic-Boreal region, using the site inventories maintained in the shared Google Sheets file.
+
+## Comparison methodology
+
+Site IDs are converted to uppercase before matching to avoid differences caused by capitalization.
+
+For example, `ab-001` and `AB-001` are treated as the same site ID.
+
+The comparison uses site IDs as the matching key. Matching IDs indicate that a site is listed in both inventories; they do not necessarily guarantee that all site metadata are identical.
+
+# Access the shared inventory
+
+## Authenticate with Google Drive
+
+The inventory is stored in a shared Google Drive folder.
+
+You must authenticate with a Google account that has permission to access the folder and spreadsheet.
+
+```{r authenticate}
+drive_auth()
+```
+
+## Locate the data inventory
+
+The following code searches the shared folder for the Google Sheets file containing `data-inventory` in its name.
+
+```{r locate-inventory, echo=TRUE}
+# Google Drive folder containing the inventory
+folder_id <- "1IFOJOUNOeNzQ35feaRyhcOSVgZCa6odZ"
+
+# List files in the folder and identify the inventory spreadsheet
+inventory_file <- 
+  googledrive::drive_ls(googledrive::as_id(folder_id)) |>
+  filter(str_detect(name, "data-inventory"))
+```
+
+## Inspect the available worksheets
+
+```{r inspect-sheets, echo=TRUE}
+googlesheets4::sheet_names(inventory_file) |> 
+  cat(sep = "\n")
+```
+
+# Import and standardize the site inventories
+
+The two worksheets contain the site inventories for FLUXNET and ARGO.
+
+We retain the site ID and site name from each source. Site IDs are converted to uppercase and leading or trailing whitespace is removed.
+
+```{r import-data}
+# FLUXNET inventory
+fluxnet_ids <- 
+  googlesheets4::read_sheet(inventory_file, 
+                            sheet = "FLUXNET-sites") |> 
+  # Converting the site ID to caps to standarize the format
+  dplyr::mutate(site_id = str_to_upper(site_id)) |> 
+  dplyr::select(site_id, site_name)
+
+# ARGO inventory
+argo_ids <- 
+  googlesheets4::read_sheet(inventory_file, 
+                            sheet = "ARGO-sites") |> 
+  # Converting the site ID to caps to standarize the format
+  dplyr::mutate(site_id = str_to_upper(Site_ID)) |> 
+  dplyr::select(site_id, site_name = Site_Name)
+```
+
+## Check data quality
+
+Missing site IDs cannot be reliably matched across databases. We therefore count these records separately and exclude them from the site-matching results.
+
+```{r data-quality}
+missing_id_summary <- tibble(
+  database = c("FLUXNET", "ARGO"),
+  
+  total_records = c(
+    nrow(fluxnet_ids),
+    nrow(argo_ids)
+  ),
+  
+  missing_site_id = c(
+    sum(is.na(fluxnet_ids$site_id) | fluxnet_ids$site_id == ""),
+    sum(is.na(argo_ids$site_id) | argo_ids$site_id == "")
+  )
+) |> 
+  mutate(
+    records_with_site_id = total_records - missing_site_id
+  )
+
+knitr::kable(
+  missing_id_summary,
+  caption = "Data quality summary: missing site IDs",
+  col.names = c(
+    "Database",
+    "Total records",
+    "Records with missing IDs",
+    "Records with IDs")
+)
+```
+
+For the comparison, we remove missing and empty site IDs. We also retain one record per site ID in each inventory to prevent duplicate IDs from inflating the number of matched sites.
+
+```{r prepare-data}
+# Remove missing IDs and retain one record per site ID
+fluxnet_clean <- fluxnet_ids |>
+  filter(!is.na(site_id), site_id != "") |>
+  distinct(site_id, .keep_all = TRUE)
+
+argo_clean <- argo_ids |>
+  filter(!is.na(site_id), site_id != "") |>
+  distinct(site_id, .keep_all = TRUE)
+```
+
+# Compare the databases
+
+## Sites present in both databases
+
+An inner join identifies site IDs found in both inventories.
+
+```{r common-sites}
+sites_in_both <- inner_join(
+  fluxnet_clean,
+  argo_clean,
+  by = "site_id",
+  suffix = c("_FLUXNET", "_ARGO")
+) |> 
+  select(site_id)
+
+kable(
+  sites_in_both,
+  caption = "Sites present in both FLUXNET and ARGO"
+)
+```
+
+## Sites present only in FLUXNET
+
+An anti-join identifies site IDs present in FLUXNET but absent from ARGO.
+
+```{r fluxnet-only}
+sites_only_fluxnet <- anti_join(
+  fluxnet_clean,
+  argo_clean,
+  by = "site_id"
+)
+
+kable(
+  sites_only_fluxnet,
+  caption = "Sites listed only in FLUXNET"
+)
+```
+
+## Sites present only in ARGO
+
+An anti-join identifies site IDs present in ARGO but absent from FLUXNET.
+
+```{r argo-only}
+sites_only_argo <- anti_join(
+  argo_clean,
+  fluxnet_clean,
+  by = "site_id"
+)
+
+kable(
+  sites_only_argo,
+  caption = "Sites listed only in ARGO"
+)
+```
+
+# Overall comparison summary
+
+This section combines the results into a single table. Each unique site ID is classified according to whether it appears in FLUXNET, ARGO, or both.
+
+```{r comparison-table}
+comparison_table <- full_join(
+  fluxnet_clean |> 
+    transmute(
+      site_id,
+      site_name_FLUXNET = site_name,
+      in_FLUXNET = TRUE
+    ),
+
+  argo_clean |> 
+    transmute(
+      site_id,
+      site_name_ARGO = site_name,
+      in_ARGO = TRUE
+    ),
+
+  by = "site_id"
+) |> 
+  mutate(
+    in_FLUXNET = coalesce(in_FLUXNET, FALSE),
+    in_ARGO = coalesce(in_ARGO, FALSE),
+
+    # Prefer the ARGO site name when available
+    site_name = coalesce(site_name_ARGO, site_name_FLUXNET),
+
+    status = case_when(
+      in_FLUXNET & in_ARGO ~ "Both",
+      in_FLUXNET ~ "Only in FLUXNET",
+      in_ARGO ~ "Only in ARGO"
+    )
+  ) |> 
+  select(site_id, site_name, status) |> 
+  arrange(status, site_id)
+
+kable(
+  comparison_table,
+  caption = "Complete comparison of unique site IDs"
+)
+```
+
+## Number of sites in each category
+
+The following table summarizes the number of unique site IDs shared between the two inventories and the number found in only one database.
+
+```{r comparison-summary}
+site_summary <- comparison_table |>
+  count(status, name = "number_of_sites") |>
+  complete(
+    status = c("Both", "Only in FLUXNET", "Only in ARGO"),
+    fill = list(number_of_sites = 0)
+  ) |>
+  mutate(
+    status = factor(
+      status,
+      levels = c("Both", "Only in FLUXNET", "Only in ARGO")
+    )
+  ) |>
+  arrange(status) |>
+  mutate(status = as.character(status))
+
+kable(
+  site_summary,
+  caption = "Summary of unique sites by database membership"
+)
+```
+
+# Interpretation
+
+The results distinguish between three categories of sites:
+
+- **Both:** The site ID occurs in both FLUXNET and ARGO.
+- **Only in FLUXNET:** The site ID occurs in FLUXNET but not in ARGO.
+- **Only in ARGO:** The site ID occurs in ARGO but not in FLUXNET.
+
+Records with missing site IDs are reported separately in the data quality summary because they cannot be matched reliably.
+
