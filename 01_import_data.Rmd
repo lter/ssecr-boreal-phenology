@@ -53,67 +53,154 @@ downloaded if it isn't in `input` yet, or if it was changed on the Drive after
 your local copy was downloaded.
 
 ```{r download}
+# input_dir <- "input"
+# dir.create(input_dir, showWarnings = FALSE)
+
+# Downloads one file if it is missing or out of date; returns the local path--- for saving and rechecking csv's
+# download_if_new <- function(drive_files, i){
+#   local_path    <- file.path(input_dir, drive_files$name[i])
+#   drive_changed <- as.POSIXct(drive_files$drive_resource[[i]]$modifiedTime,
+#                               format = "%Y-%m-%dT%H:%M:%OS", tz = "UTC")
+# 
+#   if(!file.exists(local_path) || file.mtime(local_path) < drive_changed){
+#     googledrive::drive_download(file = drive_files$id[i], path = local_path, overwrite = T)
+#   } else {
+#     message("Up to date, skipping: ", drive_files$name[i])
+#   }
+#   local_path
+# }
+
+
+
+#for checking against saved RDS files
 input_dir <- "input"
 dir.create(input_dir, showWarnings = FALSE)
 
-# Downloads one file if it is missing or out of date; returns the local path
-download_if_new <- function(drive_files, i){
-  local_path    <- file.path(input_dir, drive_files$name[i])
-  drive_changed <- as.POSIXct(drive_files$drive_resource[[i]]$modifiedTime,
-                              format = "%Y-%m-%dT%H:%M:%OS", tz = "UTC")
-
-  if(!file.exists(local_path) || file.mtime(local_path) < drive_changed){
-    googledrive::drive_download(file = drive_files$id[i], path = local_path, overwrite = T)
-  } else {
-    message("Up to date, skipping: ", drive_files$name[i])
-  }
-  local_path
+# Turns a Drive modifiedTime string into a date-time
+drive_time <- function(drive_files, i){
+  as.POSIXct(drive_files$drive_resource[[i]]$modifiedTime,
+             format = "%Y-%m-%dT%H:%M:%OS", tz = "UTC")
 }
+
+# For one csv or xlsx on the Drive: if the local .rds is missing or older than
+# the Drive file, download to a temp file, read it, and save it as .rds.
+# Otherwise just read the existing .rds. Returns the data frame.
+get_rds <- function(drive_files, i, reader){
+  file_name <- drive_files$name[i]
+  rds_path  <- file.path(input_dir, sub("\\.(csv|xlsx)$", ".rds", file_name))
+
+  if(!file.exists(rds_path) || file.mtime(rds_path) < drive_time(drive_files, i)){
+    temp_file <- tempfile(fileext = paste0(".", tools::file_ext(file_name)))
+    googledrive::drive_download(file = drive_files$id[i], path = temp_file, overwrite = T)
+    dat <- reader(temp_file)
+    saveRDS(dat, rds_path)
+    unlink(temp_file)
+  } else {
+    message("Up to date, skipping: ", file_name)
+    dat <- readRDS(rds_path)
+  }
+  dat
+}
+
+
+
+
+
 ```
 
 ## Read the files into R
 Cross-references with date on google drive items and only replaces/redownloads if there has been an update to the file, or if there is a new item added
 ```{r read-files}
+# data_list <- list()
+# 
+# # CSVs
+# for(i in seq_len(nrow(csv_files))){
+#   local_path <- download_if_new(csv_files, i)
+#   data_list[[csv_files$name[i]]] <- readr::read_csv(local_path)
+# }
+# 
+# # Excel files (reads the first sheet)
+# for(i in seq_len(nrow(xlsx_files))){
+#   local_path <- download_if_new(xlsx_files, i)
+#   data_list[[xlsx_files$name[i]]] <- readxl::read_excel(local_path)
+# }
+
+# Zip files: only the CSVs inside are kept, in input/<zip name>/
+# The zip itself goes to a temporary file and is deleted after unzipping
+# for(i in seq_len(nrow(zip_files))){
+#   zip_dir       <- file.path(input_dir, sub("\\.zip$", "", zip_files$name[i]))
+#   drive_changed <- as.POSIXct(zip_files$drive_resource[[i]]$modifiedTime,
+#                               format = "%Y-%m-%dT%H:%M:%OS", tz = "UTC")
+#   local_csvs    <- list.files(zip_dir, pattern = "\\.csv$", full.names = TRUE)
+
+
+  
+  # Download and unzip only if the CSVs are missing or older than the zip on the Drive
+#   if(length(local_csvs) == 0 || min(file.mtime(local_csvs)) < drive_changed){
+#     temp_zip <- tempfile(fileext = ".zip")
+#     googledrive::drive_download(file = zip_files$id[i], path = temp_zip, overwrite = T)
+# 
+#     csvs_in_zip <- grep("\\.csv$", unzip(temp_zip, list = TRUE)$Name, value = TRUE)
+#     csvs_in_zip <- csvs_in_zip[!grepl("__MACOSX", csvs_in_zip)] #zips were created on a mac, this line of code deals with naming structure related to that
+#     dir.create(zip_dir, showWarnings = FALSE)
+#     unzip(temp_zip, files = csvs_in_zip, exdir = zip_dir, junkpaths = TRUE)
+#     unlink(temp_zip)
+# 
+#     local_csvs <- list.files(zip_dir, pattern = "\\.csv$", full.names = TRUE)
+#   } else {
+#     message("Up to date, skipping: ", zip_files$name[i])
+#   }
+# 
+#   for(focal_file in local_csvs){
+#     data_list[[basename(focal_file)]] <- readr::read_csv(focal_file)
+#   }
+# }
+  
+#restructured for writing RDS files instead of csvs
 data_list <- list()
 
 # CSVs
 for(i in seq_len(nrow(csv_files))){
-  local_path <- download_if_new(csv_files, i)
-  data_list[[csv_files$name[i]]] <- readr::read_csv(local_path)
+  data_list[[csv_files$name[i]]] <- get_rds(csv_files, i, readr::read_csv)
 }
 
 # Excel files (reads the first sheet)
 for(i in seq_len(nrow(xlsx_files))){
-  local_path <- download_if_new(xlsx_files, i)
-  data_list[[xlsx_files$name[i]]] <- readxl::read_excel(local_path)
+  data_list[[xlsx_files$name[i]]] <- get_rds(xlsx_files, i, readxl::read_excel)
 }
 
-# Zip files: only the CSVs inside are kept, in input/<zip name>/
-# The zip itself goes to a temporary file and is deleted after unzipping
+# Zip files: each CSV inside is saved as an .rds in input/<zip name>/
+# The zip and the unzipped CSVs go to temporary locations and are deleted after
 for(i in seq_len(nrow(zip_files))){
-  zip_dir       <- file.path(input_dir, sub("\\.zip$", "", zip_files$name[i]))
-  drive_changed <- as.POSIXct(zip_files$drive_resource[[i]]$modifiedTime,
-                              format = "%Y-%m-%dT%H:%M:%OS", tz = "UTC")
-  local_csvs    <- list.files(zip_dir, pattern = "\\.csv$", full.names = TRUE)
-
-  # Download and unzip only if the CSVs are missing or older than the zip on the Drive
-  if(length(local_csvs) == 0 || min(file.mtime(local_csvs)) < drive_changed){
-    temp_zip <- tempfile(fileext = ".zip")
+  zip_dir   <- file.path(input_dir, sub("\\.zip$", "", zip_files$name[i]))
+  local_rds <- list.files(zip_dir, pattern = "\\.rds$", full.names = TRUE)
+  
+   # Rebuild the .rds files only if they're missing or older than the zip on the Drive
+  if(length(local_rds) == 0 || min(file.mtime(local_rds)) < drive_time(zip_files, i)){
+    temp_zip   <- tempfile(fileext = ".zip")
+    temp_unzip <- tempfile()
     googledrive::drive_download(file = zip_files$id[i], path = temp_zip, overwrite = T)
 
     csvs_in_zip <- grep("\\.csv$", unzip(temp_zip, list = TRUE)$Name, value = TRUE)
     csvs_in_zip <- csvs_in_zip[!grepl("__MACOSX", csvs_in_zip)] #zips were created on a mac, this line of code deals with naming structure related to that
-    dir.create(zip_dir, showWarnings = FALSE)
-    unzip(temp_zip, files = csvs_in_zip, exdir = zip_dir, junkpaths = TRUE)
-    unlink(temp_zip)
+    unzip(temp_zip, files = csvs_in_zip, exdir = temp_unzip, junkpaths = TRUE)
 
-    local_csvs <- list.files(zip_dir, pattern = "\\.csv$", full.names = TRUE)
+    dir.create(zip_dir, showWarnings = FALSE)
+    unlink(local_rds) # clears out old .rds files in case a CSV was removed from the zip
+    for(focal_csv in list.files(temp_unzip, pattern = "\\.csv$", full.names = TRUE)){
+      saveRDS(readr::read_csv(focal_csv),
+              file.path(zip_dir, sub("\\.csv$", ".rds", basename(focal_csv))))
+    }
+    unlink(c(temp_zip, temp_unzip), recursive = TRUE)
+
+    local_rds <- list.files(zip_dir, pattern = "\\.rds$", full.names = TRUE)
   } else {
     message("Up to date, skipping: ", zip_files$name[i])
   }
 
-  for(focal_file in local_csvs){
-    data_list[[basename(focal_file)]] <- readr::read_csv(focal_file)
+  for(focal_file in local_rds){
+    # keeps the original .csv name as the list name so data_list[["file.csv"]] still works
+    data_list[[sub("\\.rds$", ".csv", basename(focal_file))]] <- readRDS(focal_file)
   }
 }
 ```
